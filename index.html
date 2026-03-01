@@ -8,8 +8,8 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" />
   <!-- Bootstrap Icons -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
-  <!-- SheetJS (xlsx) -->
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <!-- xlsx-js-style (SheetJS fork with free cell-style support) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx-js-style.min.js"></script>
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
 
@@ -128,42 +128,11 @@
 
 <div class="container-fluid px-4 py-4" style="max-width:1600px;">
 
-  <!-- ── Row 1: Config + Upload ── -->
+  <!-- ── Row 1: Upload ── -->
   <div class="row g-3 mb-4">
 
-    <!-- OpenRouter API Key -->
-    <div class="col-lg-4">
-      <div class="card h-100">
-        <div class="card-header" style="background:var(--primary);color:#fff;">
-          <i class="bi bi-key-fill me-2"></i>OpenRouter Configuration
-        </div>
-        <div class="card-body">
-          <label class="form-label fw-semibold small">API Key
-            <a href="https://openrouter.ai/keys" target="_blank" class="ms-2 text-decoration-none small">
-              <i class="bi bi-box-arrow-up-right"></i> Get free key
-            </a>
-          </label>
-          <div class="input-group mb-3">
-            <input type="password" class="form-control" id="apiKey"
-                   placeholder="sk-or-v1-…" />
-            <button class="btn btn-outline-secondary" type="button" id="toggleKey">
-              <i class="bi bi-eye"></i>
-            </button>
-          </div>
-          <label class="form-label fw-semibold small">AI Model (free)</label>
-          <select class="form-select" id="aiModel">
-            <option value="meta-llama/llama-3.1-8b-instruct:free">LLaMA 3.1 8B (free)</option>
-            <option value="google/gemma-2-9b-it:free">Gemma 2 9B (free)</option>
-            <option value="mistralai/mistral-7b-instruct:free">Mistral 7B (free)</option>
-            <option value="microsoft/phi-3-mini-128k-instruct:free">Phi-3 Mini (free)</option>
-          </select>
-          <div class="form-text mt-2">Your key is stored only in your browser.</div>
-        </div>
-      </div>
-    </div>
-
     <!-- Upload -->
-    <div class="col-lg-8">
+    <div class="col-12">
       <div class="card h-100">
         <div class="card-header" style="background:var(--primary);color:#fff;">
           <i class="bi bi-cloud-upload-fill me-2"></i>Upload Cell Outage Excel
@@ -258,7 +227,13 @@
       <div class="card">
         <div class="card-header" style="background:var(--primary);color:#fff;">
           <i class="bi bi-robot me-2"></i>AI Spare Parts Analysis
-          <span class="float-end">
+          <span class="float-end d-flex gap-2 align-items-center">
+            <select class="form-select form-select-sm" id="aiModel" style="width:auto;">
+              <option value="meta-llama/llama-3.1-8b-instruct:free">LLaMA 3.1 8B</option>
+              <option value="google/gemma-2-9b-it:free">Gemma 2 9B</option>
+              <option value="mistralai/mistral-7b-instruct:free">Mistral 7B</option>
+              <option value="microsoft/phi-3-mini-128k-instruct:free">Phi-3 Mini</option>
+            </select>
             <button class="btn btn-sm btn-light" id="btnAnalyze">
               <i class="bi bi-play-fill me-1"></i>Run AI Analysis
             </button>
@@ -350,7 +325,37 @@
     </div>
   </div>
 
-  <!-- ── Row 6: History ── -->
+  <!-- ── Row 6: Spare Parts Needed ── -->
+  <div id="spareNamesRow" class="row g-3 mb-4 d-none">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header" style="background:#1b5e20;color:#fff;">
+          <i class="bi bi-tools me-2"></i>Spare Parts Needed
+          <small class="ms-2 fw-normal opacity-75">(extracted from Remarks)</small>
+        </div>
+        <div class="card-body p-0">
+          <div class="tbl-wrap" style="max-height:360px;overflow-y:auto;">
+            <table class="table table-sm table-hover mb-0" id="spareNamesTable">
+              <thead>
+                <tr style="background:#2e7d32;color:#fff;">
+                  <th>#</th>
+                  <th>Spare Part Needed</th>
+                  <th>Count</th>
+                  <th>Max Duration (Days)</th>
+                  <th>Severity</th>
+                  <th>Vendors</th>
+                  <th>Sites Affected</th>
+                </tr>
+              </thead>
+              <tbody id="spareNamesBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Row 7: History ── -->
   <div id="historyRow" class="row g-3 mb-4">
     <div class="col-12">
       <div class="card">
@@ -375,11 +380,15 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
+/* xlsx-js-style exports as XLSXStyle; alias to XLSX for compatibility */
+/* global XLSXStyle */
+const XLSX = (typeof XLSXStyle !== 'undefined') ? XLSXStyle : window.XLSX;
+
 /* ════════════════════════════════════════════════════════
    CONSTANTS & GLOBALS
 ════════════════════════════════════════════════════════ */
 const STORAGE_KEY  = 'cellOutageHistory';
-const APIKEY_KEY   = 'cellOutageApiKey';
+const OPENROUTER_API_KEY = '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';
 const SPARE_KEYWORDS = ['spare', 'rru', 'bbu', 'antenna', 'cable', 'module', 'card', 'unit', 'hardware', 'equipment'];
 
 // Column name mappings (flexible matching)
@@ -621,6 +630,7 @@ function renderTable(rows) {
   document.getElementById('statsRow').classList.remove('d-none');
   document.getElementById('tableRow').classList.remove('d-none');
   document.getElementById('aiRow').classList.remove('d-none');
+  renderSpareNames(rows);
 }
 
 function esc(v) {
@@ -781,9 +791,7 @@ function renderHistory() {
    AI ANALYSIS
 ════════════════════════════════════════════════════════ */
 async function runAiAnalysis() {
-  const apiKey = document.getElementById('apiKey').value.trim();
   const model  = document.getElementById('aiModel').value;
-  if (!apiKey) { alert('Please enter your OpenRouter API key first.'); return; }
   if (allData.length === 0) { alert('Please upload an Excel file first.'); return; }
 
   showSpinner('Running AI analysis…');
@@ -824,7 +832,7 @@ Be concise and actionable.`;
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': window.location.href,
         'X-Title': 'Cell Outage Spare Analyzer',
@@ -855,7 +863,64 @@ Be concise and actionable.`;
 }
 
 /* ════════════════════════════════════════════════════════
-   EXCEL EXPORT (SheetJS with cell styles)
+   SPARE NAMES EXTRACTION
+════════════════════════════════════════════════════════ */
+function extractSpareName(remarks) {
+  let s = String(remarks).trim();
+  // Strip common filler prefixes ("No spares …", "Missing …", "Required …")
+  s = s.replace(/^(no\s+)?(spare\s+parts?|spares?)\s*[-:,]?\s*/i, '');
+  s = s.replace(/^(missing|needed|required|not\s+available)\s*[-:,]?\s*/i, '');
+  return s.trim() || String(remarks).trim();
+}
+
+function buildSpareNamesData(rows) {
+  const spareMap = {};
+  rows.forEach(r => {
+    const spareName = extractSpareName(r.remarks);
+    const key = spareName.toLowerCase();
+    if (!spareMap[key]) {
+      spareMap[key] = { spareName, count: 0, sites: [], vendors: new Set(), maxDuration: 0 };
+    }
+    spareMap[key].count++;
+    const site = r.siteId || r.siteName || r.cell || '?';
+    spareMap[key].sites.push(site);
+    if (r.vendor) spareMap[key].vendors.add(r.vendor);
+    const d = parseFloat(r.duration) || 0;
+    if (d > spareMap[key].maxDuration) spareMap[key].maxDuration = d;
+  });
+  return Object.values(spareMap)
+    // Sort by max duration descending; use count as tiebreaker
+    .sort((a, b) => b.maxDuration - a.maxDuration || b.count - a.count);
+}
+
+function renderSpareNames(rows) {
+  const data   = buildSpareNamesData(rows);
+  const tbody  = document.getElementById('spareNamesBody');
+  tbody.innerHTML = '';
+
+  data.forEach((s, i) => {
+    const d   = s.maxDuration;
+    const cls = d > 60 ? 'dur-critical' : d > 30 ? 'dur-high' : 'dur-medium';
+    const sev = d > 60 ? '🔴 Critical' : d > 30 ? '🟠 High' : '🟡 Medium';
+    const tr  = document.createElement('tr');
+    tr.className = cls;
+    tr.innerHTML = `
+      <td>${i + 1}</td>
+      <td><strong>${esc(s.spareName)}</strong></td>
+      <td><span class="badge bg-primary">${s.count}</span></td>
+      <td><strong>${s.maxDuration}</strong></td>
+      <td>${sev}</td>
+      <td>${esc([...s.vendors].join(', '))}</td>
+      <td><small>${esc(s.sites.slice(0, 8).join(', ') + (s.sites.length > 8 ? ` (+${s.sites.length - 8} more)` : ''))}</small></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('spareNamesRow').classList.toggle('d-none', data.length === 0);
+}
+
+/* ════════════════════════════════════════════════════════
+   EXCEL EXPORT (xlsx-js-style with full cell styles)
 ════════════════════════════════════════════════════════ */
 function exportExcel() {
   if (filteredRows.length === 0) {
@@ -930,7 +995,53 @@ function exportExcel() {
 
   XLSX.utils.book_append_sheet(wb, ws1, 'Required Spares');
 
-  /* ── Sheet 2: Summary ── */
+  /* ── Sheet 2: Spare Parts Needed ── */
+  const spareData    = buildSpareNamesData(filteredRows);
+  const spareHeaders = ['#', 'Spare Part Needed', 'Count', 'Max Duration (Days)', 'Severity', 'Vendors', 'Sites Affected'];
+  const spareAoa     = [spareHeaders, ...spareData.map((s, i) => {
+    const d   = s.maxDuration;
+    const sev = d > 60 ? 'Critical' : d > 30 ? 'High' : 'Medium';
+    return [
+      i + 1,
+      s.spareName,
+      s.count,
+      s.maxDuration,
+      sev,
+      [...s.vendors].join(', '),
+      s.sites.slice(0, 10).join(', ') + (s.sites.length > 10 ? ` (+${s.sites.length - 10} more)` : ''),
+    ];
+  })];
+  const wsSpare = XLSX.utils.aoa_to_sheet(spareAoa);
+  wsSpare['!cols'] = [{ wch: 4 }, { wch: 38 }, { wch: 8 }, { wch: 18 }, { wch: 12 }, { wch: 22 }, { wch: 55 }];
+  spareHeaders.forEach((_, ci) => {
+    const ref = XLSX.utils.encode_cell({ r: 0, c: ci });
+    if (wsSpare[ref]) wsSpare[ref].s = {
+      fill: { fgColor: { rgb: '1B5E20' } },
+      font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 },
+      alignment: { horizontal: 'center', wrapText: true },
+      border: { bottom: { style: 'medium', color: { rgb: '43A047' } } },
+    };
+  });
+  spareData.forEach((s, ri) => {
+    const d   = s.maxDuration;
+    const rgb = d > 60 ? 'FFCDD2' : d > 30 ? 'FFE0B2' : 'FFF9C4';
+    spareHeaders.forEach((_, ci) => {
+      const ref = XLSX.utils.encode_cell({ r: ri + 1, c: ci });
+      if (!wsSpare[ref]) wsSpare[ref] = { v: '', t: 's' };
+      wsSpare[ref].s = {
+        fill: { fgColor: { rgb } },
+        font: { sz: 10, bold: ci === 1 },
+        alignment: { wrapText: ci === 6, horizontal: 'left' },
+        border: {
+          bottom: { style: 'thin', color: { rgb: 'DDDDDD' } },
+          right:  { style: 'thin', color: { rgb: 'DDDDDD' } },
+        },
+      };
+    });
+  });
+  XLSX.utils.book_append_sheet(wb, wsSpare, 'Spare Parts Needed');
+
+  /* ── Sheet 3: Summary ── */
   const vendorCounts  = countBy(filteredRows, 'vendor');
   const regionCounts  = countBy(filteredRows, 'region');
   const techCounts    = countBy(filteredRows, 'tech');
@@ -964,7 +1075,7 @@ function exportExcel() {
   };
   XLSX.utils.book_append_sheet(wb, ws2, 'Summary');
 
-  /* ── Sheet 3: Full History ── */
+  /* ── Sheet 4: Full History ── */
   const histAll = getHistory().flatMap(h => (h.rows || []).map(r => ({...r, _file: h.fileName})));
   if (histAll.length > 0) {
     const histHeaders = [...headers, 'Source File'];
@@ -1090,28 +1201,6 @@ ${aiText && aiText !== 'Click "Run AI Analysis" to get AI insights on the requir
    EVENT LISTENERS
 ════════════════════════════════════════════════════════ */
 window.addEventListener('DOMContentLoaded', () => {
-  // Restore saved API key
-  const savedKey = localStorage.getItem(APIKEY_KEY);
-  if (savedKey) document.getElementById('apiKey').value = savedKey;
-
-  // Save API key on change
-  document.getElementById('apiKey').addEventListener('input', e => {
-    localStorage.setItem(APIKEY_KEY, e.target.value.trim());
-  });
-
-  // Toggle key visibility
-  document.getElementById('toggleKey').addEventListener('click', () => {
-    const inp = document.getElementById('apiKey');
-    const ico = document.getElementById('toggleKey').querySelector('i');
-    if (inp.type === 'password') {
-      inp.type = 'text';
-      ico.className = 'bi bi-eye-slash';
-    } else {
-      inp.type = 'password';
-      ico.className = 'bi bi-eye';
-    }
-  });
-
   // File input
   document.getElementById('fileInput').addEventListener('change', e => {
     handleFile(e.target.files[0]);
