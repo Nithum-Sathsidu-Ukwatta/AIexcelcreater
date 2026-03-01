@@ -152,7 +152,7 @@
             <option value="mistralai/mistral-7b-instruct:free">Mistral 7B (free)</option>
             <option value="microsoft/phi-3-mini-128k-instruct:free">Phi-3 Mini (free)</option>
           </select>
-          <div class="form-text mt-2">Configure <code>window.OPENROUTER_API_KEY</code> or set a fallback key in code before deployment.</div>
+          <div class="form-text mt-2">Configure <code>window.OPENROUTER_API_KEY</code> or set <code>APP_OPENROUTER_API_KEY_FALLBACK</code> before deployment.</div>
         </div>
       </div>
     </div>
@@ -375,8 +375,16 @@
 ════════════════════════════════════════════════════════ */
 const STORAGE_KEY  = 'cellOutageHistory';
 const APIKEY_KEY   = 'cellOutageApiKey';
+const APP_OPENROUTER_API_KEY_FALLBACK = '';
 const APP_OPENROUTER_API_KEY = String(window.OPENROUTER_API_KEY || '').trim();
 const SPARE_KEYWORDS = ['spare', 'rru', 'bbu', 'antenna', 'cable', 'module', 'card', 'unit', 'hardware', 'equipment'];
+const MIN_SPARE_NAME_LENGTH = 2;
+const MAX_SPARE_NAME_LENGTH = 40;
+const SPARE_ITEM_REGEX = new RegExp(`\\b(?:\\d+\\s*)?(${SPARE_KEYWORDS
+  .filter(k => k !== 'spare')
+  .map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  .join('|')})\\b`, 'gi');
+const SPARE_PHRASE_REGEX = new RegExp(`\\bspare(?:s)?\\s+([a-zA-Z0-9\\-\\/ ]{${MIN_SPARE_NAME_LENGTH},${MAX_SPARE_NAME_LENGTH}})`, 'i');
 
 // Column name mappings (flexible matching)
 const COL_MAP = {
@@ -461,10 +469,10 @@ function extractSpareNames(remarks) {
   if (!text) return [];
   const names = [];
 
-  const common = text.match(/\b(?:\d+\s*)?(rru|bbu|antenna|cable|module|card|unit|hardware|equipment)\b/gi) || [];
+  const common = text.match(SPARE_ITEM_REGEX) || [];
   common.forEach(m => names.push(m.trim().toUpperCase()));
 
-  const sparePhrase = text.match(/\bspare(?:s)?\s+([a-z0-9\-\/ ]{2,40})/i);
+  const sparePhrase = text.match(SPARE_PHRASE_REGEX);
   if (sparePhrase && sparePhrase[1]) {
     names.push(sparePhrase[1].split(/[.,;|]/)[0].trim().toUpperCase());
   }
@@ -793,9 +801,12 @@ function renderHistory() {
    AI ANALYSIS
 ════════════════════════════════════════════════════════ */
 async function runAiAnalysis() {
-  const apiKey = APP_OPENROUTER_API_KEY || localStorage.getItem(APIKEY_KEY) || '';
+  const apiKey = APP_OPENROUTER_API_KEY || APP_OPENROUTER_API_KEY_FALLBACK || localStorage.getItem(APIKEY_KEY) || '';
   const model  = document.getElementById('aiModel').value;
-  if (!apiKey) { alert('OpenRouter API key is not configured by the app owner yet.'); return; }
+  if (!apiKey) {
+    alert('OpenRouter API key is not configured by the app owner yet.\nPlease set window.OPENROUTER_API_KEY or APP_OPENROUTER_API_KEY_FALLBACK.');
+    return;
+  }
   if (allData.length === 0) { alert('Please upload an Excel file first.'); return; }
 
   showSpinner('Running AI analysis…');
