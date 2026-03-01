@@ -8,8 +8,8 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" />
   <!-- Bootstrap Icons -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
-  <!-- SheetJS (xlsx) -->
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <!-- xlsx-js-style (SheetJS compatible with style export support) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
 
@@ -21,14 +21,16 @@
       --danger:  #f44336;
       --ok:      #4caf50;
     }
-    body { background: #f0f4f8; font-family: 'Segoe UI', sans-serif; }
+    body { background: linear-gradient(180deg, #eef3fb 0%, #f7faff 100%); font-family: 'Segoe UI', sans-serif; }
 
     /* ── Navbar ── */
     .navbar-brand span { color: var(--accent); }
 
     /* ── Cards ── */
-    .card { border: none; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+    .card { border: none; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.08); transition: transform .15s ease, box-shadow .15s ease; }
+    .card:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(13,59,102,.12); }
     .card-header { border-radius: 12px 12px 0 0 !important; font-weight: 600; }
+    .navbar { box-shadow: 0 2px 10px rgba(0,0,0,.12); }
 
     /* ── Drop zone ── */
     #dropZone {
@@ -37,9 +39,10 @@
       padding: 40px;
       text-align: center;
       cursor: pointer;
-      transition: background .2s;
+      transition: background .2s, transform .2s;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
     }
-    #dropZone.dragover { background: #e3f2fd; }
+    #dropZone.dragover { background: #e3f2fd; transform: scale(1.01); }
     #dropZone i { font-size: 3rem; color: var(--accent); }
 
     /* ── Summary badges ── */
@@ -135,20 +138,12 @@
     <div class="col-lg-4">
       <div class="card h-100">
         <div class="card-header" style="background:var(--primary);color:#fff;">
-          <i class="bi bi-key-fill me-2"></i>OpenRouter Configuration
+          <i class="bi bi-gear-fill me-2"></i>OpenRouter Configuration
         </div>
         <div class="card-body">
-          <label class="form-label fw-semibold small">API Key
-            <a href="https://openrouter.ai/keys" target="_blank" class="ms-2 text-decoration-none small">
-              <i class="bi bi-box-arrow-up-right"></i> Get free key
-            </a>
-          </label>
-          <div class="input-group mb-3">
-            <input type="password" class="form-control" id="apiKey"
-                   placeholder="sk-or-v1-…" />
-            <button class="btn btn-outline-secondary" type="button" id="toggleKey">
-              <i class="bi bi-eye"></i>
-            </button>
+          <div class="alert alert-info py-2 px-3 small mb-3">
+            <i class="bi bi-shield-lock me-1"></i>
+            API key is managed by the app owner (not entered by end users).
           </div>
           <label class="form-label fw-semibold small">AI Model (free)</label>
           <select class="form-select" id="aiModel">
@@ -157,7 +152,7 @@
             <option value="mistralai/mistral-7b-instruct:free">Mistral 7B (free)</option>
             <option value="microsoft/phi-3-mini-128k-instruct:free">Phi-3 Mini (free)</option>
           </select>
-          <div class="form-text mt-2">Your key is stored only in your browser.</div>
+          <div class="form-text mt-2">Configure <code>window.OPENROUTER_API_KEY</code> or set a fallback key in code before deployment.</div>
         </div>
       </div>
     </div>
@@ -380,6 +375,7 @@
 ════════════════════════════════════════════════════════ */
 const STORAGE_KEY  = 'cellOutageHistory';
 const APIKEY_KEY   = 'cellOutageApiKey';
+const APP_OPENROUTER_API_KEY = String(window.OPENROUTER_API_KEY || '').trim();
 const SPARE_KEYWORDS = ['spare', 'rru', 'bbu', 'antenna', 'cable', 'module', 'card', 'unit', 'hardware', 'equipment'];
 
 // Column name mappings (flexible matching)
@@ -458,6 +454,22 @@ function countBy(arr, field) {
     acc[v] = (acc[v] || 0) + 1;
     return acc;
   }, {});
+}
+
+function extractSpareNames(remarks) {
+  const text = String(remarks || '');
+  if (!text) return [];
+  const names = [];
+
+  const common = text.match(/\b(?:\d+\s*)?(rru|bbu|antenna|cable|module|card|unit|hardware|equipment)\b/gi) || [];
+  common.forEach(m => names.push(m.trim().toUpperCase()));
+
+  const sparePhrase = text.match(/\bspare(?:s)?\s+([a-z0-9\-\/ ]{2,40})/i);
+  if (sparePhrase && sparePhrase[1]) {
+    names.push(sparePhrase[1].split(/[.,;|]/)[0].trim().toUpperCase());
+  }
+
+  return [...new Set(names.filter(Boolean))];
 }
 
 // Chart palette
@@ -781,9 +793,9 @@ function renderHistory() {
    AI ANALYSIS
 ════════════════════════════════════════════════════════ */
 async function runAiAnalysis() {
-  const apiKey = document.getElementById('apiKey').value.trim();
+  const apiKey = APP_OPENROUTER_API_KEY || localStorage.getItem(APIKEY_KEY) || '';
   const model  = document.getElementById('aiModel').value;
-  if (!apiKey) { alert('Please enter your OpenRouter API key first.'); return; }
+  if (!apiKey) { alert('OpenRouter API key is not configured by the app owner yet.'); return; }
   if (allData.length === 0) { alert('Please upload an Excel file first.'); return; }
 
   showSpinner('Running AI analysis…');
@@ -930,7 +942,23 @@ function exportExcel() {
 
   XLSX.utils.book_append_sheet(wb, ws1, 'Required Spares');
 
-  /* ── Sheet 2: Summary ── */
+  /* ── Sheet 2: Spares Needed ── */
+  const spareCounts = {};
+  filteredRows.forEach(r => {
+    extractSpareNames(r.remarks).forEach(name => {
+      spareCounts[name] = (spareCounts[name] || 0) + 1;
+    });
+  });
+  const spareRows = Object.entries(spareCounts).sort((a, b) => b[1] - a[1]);
+  if (spareRows.length > 0) {
+    const sparesData = [['Spare Name', 'Mentions'], ...spareRows];
+    const wsSpares = XLSX.utils.aoa_to_sheet(sparesData);
+    wsSpares['!cols'] = [{ wch: 36 }, { wch: 12 }];
+    ['A1', 'B1'].forEach(ref => { if (wsSpares[ref]) wsSpares[ref].s = headerStyle; });
+    XLSX.utils.book_append_sheet(wb, wsSpares, 'Spares Needed');
+  }
+
+  /* ── Sheet 3: Summary ── */
   const vendorCounts  = countBy(filteredRows, 'vendor');
   const regionCounts  = countBy(filteredRows, 'region');
   const techCounts    = countBy(filteredRows, 'tech');
@@ -964,7 +992,7 @@ function exportExcel() {
   };
   XLSX.utils.book_append_sheet(wb, ws2, 'Summary');
 
-  /* ── Sheet 3: Full History ── */
+  /* ── Sheet 4: Full History ── */
   const histAll = getHistory().flatMap(h => (h.rows || []).map(r => ({...r, _file: h.fileName})));
   if (histAll.length > 0) {
     const histHeaders = [...headers, 'Source File'];
@@ -1090,28 +1118,6 @@ ${aiText && aiText !== 'Click "Run AI Analysis" to get AI insights on the requir
    EVENT LISTENERS
 ════════════════════════════════════════════════════════ */
 window.addEventListener('DOMContentLoaded', () => {
-  // Restore saved API key
-  const savedKey = localStorage.getItem(APIKEY_KEY);
-  if (savedKey) document.getElementById('apiKey').value = savedKey;
-
-  // Save API key on change
-  document.getElementById('apiKey').addEventListener('input', e => {
-    localStorage.setItem(APIKEY_KEY, e.target.value.trim());
-  });
-
-  // Toggle key visibility
-  document.getElementById('toggleKey').addEventListener('click', () => {
-    const inp = document.getElementById('apiKey');
-    const ico = document.getElementById('toggleKey').querySelector('i');
-    if (inp.type === 'password') {
-      inp.type = 'text';
-      ico.className = 'bi bi-eye-slash';
-    } else {
-      inp.type = 'password';
-      ico.className = 'bi bi-eye';
-    }
-  });
-
   // File input
   document.getElementById('fileInput').addEventListener('change', e => {
     handleFile(e.target.files[0]);

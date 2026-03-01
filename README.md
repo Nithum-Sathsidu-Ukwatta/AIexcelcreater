@@ -7,16 +7,16 @@ A **single-page web app** (`index.html`) that:
 - 📊 Shows interactive **charts** (by vendor, region, technology, duration breakdown)
 - 📈 Tracks **history** across multiple uploads and shows a trend chart
 - 🤖 Runs **AI analysis** via [OpenRouter](https://openrouter.ai) (free models available) to suggest which spares to procure and in what priority
-- 📥 **Exports a styled Excel** (.xlsx) with colour-coded rows, a summary sheet, and full history
+- 📥 **Exports a styled Excel** (.xlsx) with colour-coded rows, a dedicated **Spares Needed** sheet, a summary sheet, and full history
 - 📄 **Exports an HTML report** for easy sharing / printing
 
 ## How to Use
 
 1. **Open `index.html`** in any modern browser (no server needed – it runs entirely client-side).
 
-2. **Get a free OpenRouter API key**:
-   - Go to <https://openrouter.ai/keys> and sign up (free tier available).
-   - Paste the key in the *OpenRouter Configuration* box. It is saved in your browser only.
+2. **Configure OpenRouter API key (app owner step)**:
+   - Get a free key from <https://openrouter.ai/keys> (free tier available).
+   - Configure `window.OPENROUTER_API_KEY` (or a secure fallback in code) before sharing the app with end users.
 
 3. **Upload your Excel file** (drag & drop or click *Browse File*).  
    The expected columns are:  
