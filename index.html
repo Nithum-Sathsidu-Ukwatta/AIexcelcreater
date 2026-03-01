@@ -1,0 +1,1272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cell Outage – Required Spares Analyzer</title>
+  <!-- Bootstrap 5 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" />
+  <!-- Bootstrap Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
+  <!-- xlsx-js-style (SheetJS fork with free cell-style support) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx-js-style.min.js"></script>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+
+  <style>
+    :root {
+      --primary: #0d3b66;
+      --accent:  #1e88e5;
+      --warning: #ff9800;
+      --danger:  #f44336;
+      --ok:      #4caf50;
+    }
+    body { background: #f0f4f8; font-family: 'Segoe UI', sans-serif; }
+
+    /* ── Navbar ── */
+    .navbar-brand span { color: var(--accent); }
+
+    /* ── Cards ── */
+    .card { border: none; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+    .card-header { border-radius: 12px 12px 0 0 !important; font-weight: 600; }
+
+    /* ── Drop zone ── */
+    #dropZone {
+      border: 2px dashed var(--accent);
+      border-radius: 12px;
+      padding: 40px;
+      text-align: center;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    #dropZone.dragover { background: #e3f2fd; }
+    #dropZone i { font-size: 3rem; color: var(--accent); }
+
+    /* ── Summary badges ── */
+    .stat-card {
+      border-radius: 12px;
+      padding: 18px 24px;
+      color: #fff;
+      font-size: .95rem;
+    }
+    .stat-card .stat-num { font-size: 2.2rem; font-weight: 700; }
+
+    /* ── Table ── */
+    .tbl-wrap { overflow-x: auto; }
+    #sparesTable thead th {
+      background: var(--primary);
+      color: #fff;
+      white-space: nowrap;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    .dur-critical { background: #ffcdd2 !important; }
+    .dur-high     { background: #ffe0b2 !important; }
+    .dur-medium   { background: #fff9c4 !important; }
+    .dur-ok       { background: #c8e6c9 !important; }
+
+    /* ── AI panel ── */
+    #aiOutput {
+      white-space: pre-wrap;
+      font-size: .92rem;
+      background: #f8fafc;
+      border-radius: 8px;
+      padding: 16px;
+      border: 1px solid #dee2e6;
+      min-height: 80px;
+    }
+
+    /* ── Chart containers ── */
+    .chart-box { position: relative; height: 260px; }
+
+    /* ── History badge ── */
+    .hist-badge { font-size: .75rem; }
+
+    /* ── Loader spinner ── */
+    .spinner-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.35);
+      z-index: 9999;
+      justify-content: center;
+      align-items: center;
+    }
+    .spinner-overlay.active { display: flex; }
+
+    /* ── Section headers ── */
+    .section-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--primary);
+      border-left: 4px solid var(--accent);
+      padding-left: 10px;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Spinner -->
+<div class="spinner-overlay" id="spinnerOverlay">
+  <div class="text-center text-white">
+    <div class="spinner-border" style="width:3rem;height:3rem;" role="status"></div>
+    <div class="mt-3 fs-5" id="spinnerMsg">Processing…</div>
+  </div>
+</div>
+
+<!-- Navbar -->
+<nav class="navbar navbar-dark" style="background:var(--primary);">
+  <div class="container-fluid px-4">
+    <span class="navbar-brand mb-0 h1">
+      <i class="bi bi-lightning-charge-fill me-2"></i>Cell Outage
+      <span>Required Spares Analyzer</span>
+    </span>
+    <span class="text-white-50 small d-none d-md-block">Powered by OpenRouter AI</span>
+  </div>
+</nav>
+
+<div class="container-fluid px-4 py-4" style="max-width:1600px;">
+
+  <!-- ── Row 1: Upload ── -->
+  <div class="row g-3 mb-4">
+
+    <!-- Upload -->
+    <div class="col-12">
+      <div class="card h-100">
+        <div class="card-header" style="background:var(--primary);color:#fff;">
+          <i class="bi bi-cloud-upload-fill me-2"></i>Upload Cell Outage Excel
+        </div>
+        <div class="card-body d-flex flex-column justify-content-center">
+          <div id="dropZone">
+            <i class="bi bi-file-earmark-spreadsheet"></i>
+            <p class="mt-3 mb-1 fw-semibold">Drag &amp; drop your Excel file here</p>
+            <p class="text-muted small mb-3">Supports .xlsx / .xls / .csv</p>
+            <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+              <i class="bi bi-folder2-open me-1"></i>Browse File
+            </button>
+            <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="d-none" />
+          </div>
+          <div id="fileInfo" class="mt-3 text-muted small text-center"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Row 2: Summary Stats (hidden until data loaded) ── -->
+  <div id="statsRow" class="row g-3 mb-4 d-none">
+    <div class="col-6 col-md-3">
+      <div class="stat-card" style="background:var(--danger);">
+        <div>Critical (&gt;60 days)</div>
+        <div class="stat-num" id="statCritical">0</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="stat-card" style="background:var(--warning);">
+        <div>High (31–60 days)</div>
+        <div class="stat-num" id="statHigh">0</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="stat-card" style="background:#fbc02d;">
+        <div>Medium (≤30 days)</div>
+        <div class="stat-num" id="statMedium">0</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="stat-card" style="background:var(--accent);">
+        <div>Total Required Spares</div>
+        <div class="stat-num" id="statTotal">0</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Row 3: Charts ── -->
+  <div id="chartsRow" class="row g-3 mb-4 d-none">
+    <div class="col-12">
+      <div class="section-title"><i class="bi bi-bar-chart-fill me-2"></i>Analytics</div>
+    </div>
+    <div class="col-md-3">
+      <div class="card">
+        <div class="card-header bg-light small fw-semibold">By Vendor</div>
+        <div class="card-body"><div class="chart-box"><canvas id="chartVendor"></canvas></div></div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card">
+        <div class="card-header bg-light small fw-semibold">By Region</div>
+        <div class="card-body"><div class="chart-box"><canvas id="chartRegion"></canvas></div></div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card">
+        <div class="card-header bg-light small fw-semibold">By Technology</div>
+        <div class="card-body"><div class="chart-box"><canvas id="chartTech"></canvas></div></div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card">
+        <div class="card-header bg-light small fw-semibold">Duration Breakdown</div>
+        <div class="card-body"><div class="chart-box"><canvas id="chartDuration"></canvas></div></div>
+      </div>
+    </div>
+    <!-- History trend chart -->
+    <div class="col-12" id="historyChartWrap">
+      <div class="card">
+        <div class="card-header bg-light small fw-semibold">
+          <i class="bi bi-clock-history me-1"></i>Historical Outage Trend (Required Spares Count per Upload)
+        </div>
+        <div class="card-body"><div style="height:200px;"><canvas id="chartHistory"></canvas></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Row 4: AI Analysis ── -->
+  <div id="aiRow" class="row g-3 mb-4 d-none">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header" style="background:var(--primary);color:#fff;">
+          <i class="bi bi-robot me-2"></i>AI Spare Parts Analysis
+          <span class="float-end d-flex gap-2 align-items-center">
+            <select class="form-select form-select-sm" id="aiModel" style="width:auto;">
+              <option value="meta-llama/llama-3.1-8b-instruct:free">LLaMA 3.1 8B</option>
+              <option value="google/gemma-2-9b-it:free">Gemma 2 9B</option>
+              <option value="mistralai/mistral-7b-instruct:free">Mistral 7B</option>
+              <option value="microsoft/phi-3-mini-128k-instruct:free">Phi-3 Mini</option>
+            </select>
+            <button class="btn btn-sm btn-light" id="btnAnalyze">
+              <i class="bi bi-play-fill me-1"></i>Run AI Analysis
+            </button>
+          </span>
+        </div>
+        <div class="card-body">
+          <div id="aiOutput" class="text-muted">Click "Run AI Analysis" to get AI insights on the required spare parts…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Row 5: Data Table + Export ── -->
+  <div id="tableRow" class="row g-3 mb-4 d-none">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header" style="background:var(--primary);color:#fff;">
+          <i class="bi bi-table me-2"></i>Required Spares – Filtered Data
+          <span class="float-end d-flex gap-2">
+            <button class="btn btn-sm btn-warning" id="btnExportExcel">
+              <i class="bi bi-file-earmark-excel-fill me-1"></i>Export Excel
+            </button>
+            <button class="btn btn-sm btn-info text-white" id="btnExportHtml">
+              <i class="bi bi-filetype-html me-1"></i>Export HTML Report
+            </button>
+          </span>
+        </div>
+        <!-- Filter bar -->
+        <div class="card-body border-bottom pb-2 pt-3">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+              <input type="text" class="form-control form-control-sm" id="filterSearch"
+                     placeholder="Search any field…" />
+            </div>
+            <div class="col-md-2">
+              <select class="form-select form-select-sm" id="filterVendor">
+                <option value="">All Vendors</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <select class="form-select form-select-sm" id="filterRegion">
+                <option value="">All Regions</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <select class="form-select form-select-sm" id="filterTech">
+                <option value="">All Tech</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <button class="btn btn-sm btn-outline-secondary w-100" id="btnClearFilter">
+                <i class="bi bi-x-circle me-1"></i>Clear
+              </button>
+            </div>
+          </div>
+        </div>
+        <!-- Color legend -->
+        <div class="card-body border-bottom py-2">
+          <small class="me-3"><span class="badge dur-critical text-dark">■</span> Critical &gt;60 days</small>
+          <small class="me-3"><span class="badge dur-high text-dark">■</span> High 31–60 days</small>
+          <small class="me-3"><span class="badge dur-medium text-dark">■</span> Medium ≤30 days</small>
+        </div>
+        <div class="card-body p-0">
+          <div class="tbl-wrap" style="max-height:480px;overflow-y:auto;">
+            <table class="table table-sm table-hover mb-0" id="sparesTable">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>ID</th>
+                  <th>Vendor</th>
+                  <th>Tech</th>
+                  <th>Site ID</th>
+                  <th>Site Name</th>
+                  <th>Cell</th>
+                  <th>Region</th>
+                  <th>Down On</th>
+                  <th>Duration (Days)</th>
+                  <th>Reported By</th>
+                  <th>Reported To</th>
+                  <th>Remarks</th>
+                  <th>Upload Date</th>
+                </tr>
+              </thead>
+              <tbody id="sparesBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Row 6: Spare Parts Needed ── -->
+  <div id="spareNamesRow" class="row g-3 mb-4 d-none">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header" style="background:#1b5e20;color:#fff;">
+          <i class="bi bi-tools me-2"></i>Spare Parts Needed
+          <small class="ms-2 fw-normal opacity-75">(extracted from Remarks)</small>
+        </div>
+        <div class="card-body p-0">
+          <div class="tbl-wrap" style="max-height:360px;overflow-y:auto;">
+            <table class="table table-sm table-hover mb-0" id="spareNamesTable">
+              <thead>
+                <tr style="background:#2e7d32;color:#fff;">
+                  <th>#</th>
+                  <th>Spare Part Needed</th>
+                  <th>Count</th>
+                  <th>Max Duration (Days)</th>
+                  <th>Severity</th>
+                  <th>Vendors</th>
+                  <th>Sites Affected</th>
+                </tr>
+              </thead>
+              <tbody id="spareNamesBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Row 7: History ── -->
+  <div id="historyRow" class="row g-3 mb-4">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-header bg-light">
+          <i class="bi bi-clock-history me-2"></i>Upload History
+          <span class="float-end">
+            <button class="btn btn-sm btn-outline-danger" id="btnClearHistory">
+              <i class="bi bi-trash me-1"></i>Clear History
+            </button>
+          </span>
+        </div>
+        <div class="card-body p-0">
+          <div id="historyList" class="p-3 text-muted small">No previous uploads yet.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+/* xlsx-js-style exports as XLSXStyle; alias to XLSX for compatibility */
+/* global XLSXStyle */
+const XLSX = (typeof XLSXStyle !== 'undefined') ? XLSXStyle : window.XLSX;
+
+/* ════════════════════════════════════════════════════════
+   CONSTANTS & GLOBALS
+════════════════════════════════════════════════════════ */
+const STORAGE_KEY  = 'cellOutageHistory';
+const OPENROUTER_API_KEY = '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';
+const SPARE_KEYWORDS = ['spare', 'rru', 'bbu', 'antenna', 'cable', 'module', 'card', 'unit', 'hardware', 'equipment'];
+
+// Column name mappings (flexible matching)
+const COL_MAP = {
+  id:         ['id'],
+  vendor:     ['vendor'],
+  tech:       ['tech','technology'],
+  siteId:     ['site id','siteid','site_id'],
+  siteName:   ['site name','sitename','site_name'],
+  cell:       ['cell'],
+  region:     ['region'],
+  downOn:     ['down on','down_on','downon','outage date','date down'],
+  duration:   ['duration','duration (days)','days','duration_days'],
+  reportedBy: ['reported by','reportedby','reported_by'],
+  reportedTo: ['reported to','reportedto','reported_to'],
+  remarks:    ['remarks','comment','comments','note','notes','remark'],
+};
+
+let allData     = [];   // all rows from current + history (required spares only)
+let currentData = [];   // rows from current upload
+let charts      = {};   // Chart.js instances
+
+/* ════════════════════════════════════════════════════════
+   UTILITIES
+════════════════════════════════════════════════════════ */
+function showSpinner(msg = 'Processing…') {
+  document.getElementById('spinnerMsg').textContent = msg;
+  document.getElementById('spinnerOverlay').classList.add('active');
+}
+function hideSpinner() {
+  document.getElementById('spinnerOverlay').classList.remove('active');
+}
+
+function getHistory() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch (e) {
+    console.warn('Cell Outage Analyzer: localStorage data corrupted, resetting history.', e);
+    return [];
+  }
+}
+function saveHistory(arr) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+}
+
+// Normalize column names from a header row
+function buildColIndex(header) {
+  const idx = {};
+  header.forEach((h, i) => {
+    const lc = String(h || '').toLowerCase().trim();
+    for (const [key, variants] of Object.entries(COL_MAP)) {
+      if (variants.some(v => lc.includes(v))) idx[key] = i;
+    }
+  });
+  return idx;
+}
+
+// Determine if a row requires a spare part
+function isRequiredSpare(remarks) {
+  if (!remarks) return false;
+  const lc = String(remarks).toLowerCase();
+  return SPARE_KEYWORDS.some(k => lc.includes(k));
+}
+
+// Classify duration for colour coding
+function durClass(days) {
+  const d = parseFloat(days) || 0;
+  if (d > 60) return 'dur-critical';
+  if (d > 30) return 'dur-high';
+  if (d > 0)  return 'dur-medium';
+  return '';
+}
+
+// Count occurrences in an array of objects by field
+function countBy(arr, field) {
+  return arr.reduce((acc, r) => {
+    const v = r[field] || 'Unknown';
+    acc[v] = (acc[v] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+// Chart palette
+const PALETTE = [
+  '#1e88e5','#e53935','#43a047','#fb8c00','#8e24aa',
+  '#00acc1','#f4511e','#3949ab','#00897b','#c0ca33',
+];
+
+/* ════════════════════════════════════════════════════════
+   CHART HELPERS
+════════════════════════════════════════════════════════ */
+function destroyChart(id) {
+  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+}
+
+function makePie(id, labels, data) {
+  destroyChart(id);
+  charts[id] = new Chart(document.getElementById(id), {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{ data, backgroundColor: PALETTE.slice(0, data.length), borderWidth: 1 }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } },
+    },
+  });
+}
+
+function makeBar(id, labels, data, label, color) {
+  destroyChart(id);
+  charts[id] = new Chart(document.getElementById(id), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label,
+        data,
+        backgroundColor: PALETTE.slice(0, data.length),
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+    },
+  });
+}
+
+function makeHistoryChart(history) {
+  destroyChart('chartHistory');
+  if (history.length < 2) {
+    document.getElementById('historyChartWrap').classList.add('d-none');
+    return;
+  }
+  document.getElementById('historyChartWrap').classList.remove('d-none');
+  const labels = history.map(h => new Date(h.uploadedAt).toLocaleDateString());
+  const data   = history.map(h => (h.rows || []).length);
+  charts['chartHistory'] = new Chart(document.getElementById('chartHistory'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Required Spare Cases',
+        data,
+        borderColor: '#1e88e5',
+        backgroundColor: 'rgba(30,136,229,0.15)',
+        tension: 0.3,
+        fill: true,
+        pointRadius: 5,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top' } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+    },
+  });
+}
+
+/* ════════════════════════════════════════════════════════
+   RENDER CHARTS
+════════════════════════════════════════════════════════ */
+function renderCharts(rows) {
+  // Vendor
+  const vc = countBy(rows, 'vendor');
+  makePie('chartVendor', Object.keys(vc), Object.values(vc));
+
+  // Region
+  const rc = countBy(rows, 'region');
+  makeBar('chartRegion', Object.keys(rc), Object.values(rc), 'Count');
+
+  // Tech
+  const tc = countBy(rows, 'tech');
+  makePie('chartTech', Object.keys(tc), Object.values(tc));
+
+  // Duration breakdown
+  const buckets = { 'Critical (>60)': 0, 'High (31-60)': 0, 'Medium (≤30)': 0 };
+  rows.forEach(r => {
+    const d = parseFloat(r.duration) || 0;
+    if (d > 60)       buckets['Critical (>60)']++;
+    else if (d > 30)  buckets['High (31-60)']++;
+    else              buckets['Medium (≤30)']++;
+  });
+  makePie('chartDuration', Object.keys(buckets), Object.values(buckets));
+
+  // History line
+  makeHistoryChart(getHistory());
+
+  document.getElementById('chartsRow').classList.remove('d-none');
+}
+
+/* ════════════════════════════════════════════════════════
+   RENDER TABLE
+════════════════════════════════════════════════════════ */
+let filteredRows = [];
+
+function renderTable(rows) {
+  filteredRows = rows;
+  const tbody = document.getElementById('sparesBody');
+  tbody.innerHTML = '';
+
+  rows.forEach((r, i) => {
+    const cls = durClass(r.duration);
+    const tr  = document.createElement('tr');
+    tr.className = cls;
+    tr.innerHTML = `
+      <td>${i + 1}</td>
+      <td>${esc(r.id)}</td>
+      <td>${esc(r.vendor)}</td>
+      <td><span class="badge bg-secondary">${esc(r.tech)}</span></td>
+      <td>${esc(r.siteId)}</td>
+      <td>${esc(r.siteName)}</td>
+      <td>${esc(r.cell)}</td>
+      <td>${esc(r.region)}</td>
+      <td>${esc(r.downOn)}</td>
+      <td><strong>${esc(r.duration)}</strong></td>
+      <td>${esc(r.reportedBy)}</td>
+      <td>${esc(r.reportedTo)}</td>
+      <td>${esc(r.remarks)}</td>
+      <td><small class="text-muted">${r.uploadedAt ? new Date(r.uploadedAt).toLocaleDateString() : '—'}</small></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  // Stats
+  let critical = 0, high = 0, medium = 0;
+  rows.forEach(r => {
+    const d = parseFloat(r.duration) || 0;
+    if (d > 60) critical++;
+    else if (d > 30) high++;
+    else medium++;
+  });
+  document.getElementById('statCritical').textContent = critical;
+  document.getElementById('statHigh').textContent     = high;
+  document.getElementById('statMedium').textContent   = medium;
+  document.getElementById('statTotal').textContent    = rows.length;
+
+  document.getElementById('statsRow').classList.remove('d-none');
+  document.getElementById('tableRow').classList.remove('d-none');
+  document.getElementById('aiRow').classList.remove('d-none');
+  renderSpareNames(rows);
+}
+
+function esc(v) {
+  return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/* ════════════════════════════════════════════════════════
+   POPULATE FILTER DROPDOWNS
+════════════════════════════════════════════════════════ */
+function populateFilters(rows) {
+  const vendors  = [...new Set(rows.map(r => r.vendor).filter(Boolean))].sort();
+  const regions  = [...new Set(rows.map(r => r.region).filter(Boolean))].sort();
+  const techs    = [...new Set(rows.map(r => r.tech).filter(Boolean))].sort();
+
+  function setOptions(selId, values) {
+    const sel = document.getElementById(selId);
+    const cur = sel.value;
+    sel.innerHTML = `<option value="">All</option>` +
+      values.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    sel.value = cur;
+  }
+  setOptions('filterVendor', vendors);
+  setOptions('filterRegion', regions);
+  setOptions('filterTech',   techs);
+}
+
+function applyFilters() {
+  const search = document.getElementById('filterSearch').value.toLowerCase();
+  const vendor = document.getElementById('filterVendor').value;
+  const region = document.getElementById('filterRegion').value;
+  const tech   = document.getElementById('filterTech').value;
+
+  const filtered = allData.filter(r => {
+    if (vendor && r.vendor !== vendor) return false;
+    if (region && r.region !== region) return false;
+    if (tech   && r.tech   !== tech)   return false;
+    if (search) {
+      const haystack = Object.values(r).join(' ').toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    return true;
+  });
+  renderTable(filtered);
+}
+
+/* ════════════════════════════════════════════════════════
+   PARSE EXCEL
+════════════════════════════════════════════════════════ */
+function parseWorkbook(wb, uploadedAt) {
+  const sheetName = wb.SheetNames[0];
+  const ws        = wb.Sheets[sheetName];
+  const raw       = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  if (raw.length < 2) return [];
+
+  // Find header row (first row with >= 5 non-empty cells)
+  let headerIdx = 0;
+  for (let i = 0; i < Math.min(10, raw.length); i++) {
+    if (raw[i].filter(c => c !== '').length >= 5) { headerIdx = i; break; }
+  }
+
+  const header = raw[headerIdx].map(h => String(h).trim());
+  const colIdx = buildColIndex(header);
+  const rows   = [];
+
+  for (let i = headerIdx + 1; i < raw.length; i++) {
+    const row = raw[i];
+    if (row.every(c => c === '')) continue;   // skip empty rows
+
+    const remarks = String(row[colIdx.remarks] ?? '');
+    if (!isRequiredSpare(remarks)) continue;  // filter: required spares only
+
+    rows.push({
+      id:         row[colIdx.id]         ?? '',
+      vendor:     row[colIdx.vendor]     ?? '',
+      tech:       row[colIdx.tech]       ?? '',
+      siteId:     row[colIdx.siteId]     ?? '',
+      siteName:   row[colIdx.siteName]   ?? '',
+      cell:       row[colIdx.cell]       ?? '',
+      region:     row[colIdx.region]     ?? '',
+      downOn:     row[colIdx.downOn]     ?? '',
+      duration:   row[colIdx.duration]   ?? '',
+      reportedBy: row[colIdx.reportedBy] ?? '',
+      reportedTo: row[colIdx.reportedTo] ?? '',
+      remarks,
+      uploadedAt,
+    });
+  }
+  return rows;
+}
+
+/* ════════════════════════════════════════════════════════
+   HANDLE FILE
+════════════════════════════════════════════════════════ */
+function handleFile(file) {
+  if (!file) return;
+  showSpinner('Reading Excel file…');
+  document.getElementById('fileInfo').textContent = `📄 ${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const wb   = XLSX.read(data, { type: 'array', cellDates: true });
+      const uploadedAt = new Date().toISOString();
+
+      currentData = parseWorkbook(wb, uploadedAt);
+      if (currentData.length === 0) {
+        hideSpinner();
+        alert('No "required spare" rows found in this file.\n\nMake sure the Remarks column contains keywords like "spare", "RRU", "BBU", etc.');
+        return;
+      }
+
+      // Save to history
+      const history = getHistory();
+      history.push({ fileName: file.name, uploadedAt, rows: currentData });
+      saveHistory(history);
+
+      // Merge all history for display
+      allData = history.flatMap(h => h.rows || []);
+
+      populateFilters(allData);
+      renderTable(allData);
+      renderCharts(allData);
+      renderHistory();
+      hideSpinner();
+    } catch (err) {
+      hideSpinner();
+      alert('Error reading file: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+/* ════════════════════════════════════════════════════════
+   HISTORY PANEL
+════════════════════════════════════════════════════════ */
+function renderHistory() {
+  const history = getHistory();
+  const el = document.getElementById('historyList');
+  if (history.length === 0) {
+    el.innerHTML = '<span class="text-muted">No previous uploads yet.</span>';
+    return;
+  }
+  el.innerHTML = history.slice().reverse().map((h, i) => `
+    <div class="d-flex align-items-center gap-3 border-bottom py-2">
+      <i class="bi bi-file-earmark-excel text-success fs-5"></i>
+      <div class="flex-grow-1">
+        <strong>${esc(h.fileName)}</strong>
+        <br/>
+        <small class="text-muted">${new Date(h.uploadedAt).toLocaleString()}</small>
+      </div>
+      <span class="badge bg-primary hist-badge">${(h.rows||[]).length} spares</span>
+    </div>
+  `).join('');
+}
+
+/* ════════════════════════════════════════════════════════
+   AI ANALYSIS
+════════════════════════════════════════════════════════ */
+async function runAiAnalysis() {
+  const model  = document.getElementById('aiModel').value;
+  if (allData.length === 0) { alert('Please upload an Excel file first.'); return; }
+
+  showSpinner('Running AI analysis…');
+  document.getElementById('aiOutput').textContent = 'Analyzing…';
+
+  // Summarize data for the prompt
+  const vendorCounts  = countBy(allData, 'vendor');
+  const regionCounts  = countBy(allData, 'region');
+  const remarksList   = [...new Set(allData.map(r => r.remarks))].slice(0, 20).join('\n');
+  const topDuration   = allData
+    .sort((a, b) => (parseFloat(b.duration)||0) - (parseFloat(a.duration)||0))
+    .slice(0, 5)
+    .map(r => `${r.siteId} (${r.cell}) – ${r.duration} days – ${r.remarks}`)
+    .join('\n');
+
+  const prompt = `You are a telecom network operations specialist analyzing cell site outages caused by missing spare parts.
+
+Data summary (${allData.length} outages requiring spares):
+- Vendors: ${JSON.stringify(vendorCounts)}
+- Regions: ${JSON.stringify(regionCounts)}
+
+Top 5 longest outages:
+${topDuration}
+
+Unique remarks (spare types mentioned):
+${remarksList}
+
+Please provide:
+1. **Critical Spares to Procure** – list the specific spare parts needed (e.g., "900 RRU x N units")
+2. **Priority Order** – rank by urgency (duration + count)
+3. **Vendor-wise Action Items** – what to request from Huawei/ZTE/Ericsson/Nokia
+4. **Risk Assessment** – sites at greatest service risk
+5. **Procurement Recommendation** – brief summary for management
+
+Be concise and actionable.`;
+
+  try {
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': window.location.href,
+        'X-Title': 'Cell Outage Spare Analyzer',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 1200,
+      }),
+    });
+
+    const json = await resp.json();
+    if (!resp.ok) {
+      const status = resp.status;
+      let hint = '';
+      if (status === 401) hint = ' – Check that your API key is correct.';
+      else if (status === 429) hint = ' – Rate limit exceeded. Please wait a moment and try again.';
+      else if (status >= 500) hint = ' – OpenRouter server error. Please try again shortly.';
+      throw new Error((json.error?.message || resp.statusText) + hint);
+    }
+    const text = json.choices?.[0]?.message?.content || 'No response from AI.';
+    document.getElementById('aiOutput').textContent = text;
+  } catch (err) {
+    document.getElementById('aiOutput').textContent = '❌ Error: ' + err.message;
+  } finally {
+    hideSpinner();
+  }
+}
+
+/* ════════════════════════════════════════════════════════
+   SPARE NAMES EXTRACTION
+════════════════════════════════════════════════════════ */
+function extractSpareName(remarks) {
+  let s = String(remarks).trim();
+  // Strip common filler prefixes ("No spares …", "Missing …", "Required …")
+  s = s.replace(/^(no\s+)?(spare\s+parts?|spares?)\s*[-:,]?\s*/i, '');
+  s = s.replace(/^(missing|needed|required|not\s+available)\s*[-:,]?\s*/i, '');
+  return s.trim() || String(remarks).trim();
+}
+
+function buildSpareNamesData(rows) {
+  const spareMap = {};
+  rows.forEach(r => {
+    const spareName = extractSpareName(r.remarks);
+    const key = spareName.toLowerCase();
+    if (!spareMap[key]) {
+      spareMap[key] = { spareName, count: 0, sites: [], vendors: new Set(), maxDuration: 0 };
+    }
+    spareMap[key].count++;
+    const site = r.siteId || r.siteName || r.cell || '?';
+    spareMap[key].sites.push(site);
+    if (r.vendor) spareMap[key].vendors.add(r.vendor);
+    const d = parseFloat(r.duration) || 0;
+    if (d > spareMap[key].maxDuration) spareMap[key].maxDuration = d;
+  });
+  return Object.values(spareMap)
+    // Sort by max duration descending; use count as tiebreaker
+    .sort((a, b) => b.maxDuration - a.maxDuration || b.count - a.count);
+}
+
+function renderSpareNames(rows) {
+  const data   = buildSpareNamesData(rows);
+  const tbody  = document.getElementById('spareNamesBody');
+  tbody.innerHTML = '';
+
+  data.forEach((s, i) => {
+    const d   = s.maxDuration;
+    const cls = d > 60 ? 'dur-critical' : d > 30 ? 'dur-high' : 'dur-medium';
+    const sev = d > 60 ? '🔴 Critical' : d > 30 ? '🟠 High' : '🟡 Medium';
+    const tr  = document.createElement('tr');
+    tr.className = cls;
+    tr.innerHTML = `
+      <td>${i + 1}</td>
+      <td><strong>${esc(s.spareName)}</strong></td>
+      <td><span class="badge bg-primary">${s.count}</span></td>
+      <td><strong>${s.maxDuration}</strong></td>
+      <td>${sev}</td>
+      <td>${esc([...s.vendors].join(', '))}</td>
+      <td><small>${esc(s.sites.slice(0, 8).join(', ') + (s.sites.length > 8 ? ` (+${s.sites.length - 8} more)` : ''))}</small></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('spareNamesRow').classList.toggle('d-none', data.length === 0);
+}
+
+/* ════════════════════════════════════════════════════════
+   EXCEL EXPORT (xlsx-js-style with full cell styles)
+════════════════════════════════════════════════════════ */
+function exportExcel() {
+  if (filteredRows.length === 0) {
+    alert('No data to export.\nIf you have filters active, try clearing them first.');
+    return;
+  }
+  showSpinner('Generating Excel…');
+
+  const wb = XLSX.utils.book_new();
+
+  /* ── Sheet 1: Required Spares ── */
+  const headers = ['#','ID','Vendor','Tech','Site ID','Site Name','Cell','Region',
+                   'Down On','Duration (Days)','Reported By','Reported To','Remarks','Upload Date'];
+
+  const aoa = [headers];
+  filteredRows.forEach((r, i) => {
+    aoa.push([
+      i + 1, r.id, r.vendor, r.tech, r.siteId, r.siteName, r.cell, r.region,
+      r.downOn, parseFloat(r.duration) || r.duration,
+      r.reportedBy, r.reportedTo, r.remarks,
+      r.uploadedAt ? new Date(r.uploadedAt).toLocaleDateString() : '',
+    ]);
+  });
+
+  const ws1 = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Column widths
+  ws1['!cols'] = [
+    {wch:5},{wch:6},{wch:10},{wch:6},{wch:12},{wch:18},{wch:12},{wch:14},
+    {wch:18},{wch:14},{wch:18},{wch:18},{wch:35},{wch:12},
+  ];
+
+  // Apply header styles
+  const headerStyle = {
+    fill: { fgColor: { rgb: '0D3B66' } },
+    font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 },
+    alignment: { horizontal: 'center', wrapText: true },
+    border: {
+      bottom: { style: 'medium', color: { rgb: '1E88E5' } },
+    },
+  };
+  headers.forEach((_, ci) => {
+    const ref = XLSX.utils.encode_cell({ r: 0, c: ci });
+    if (ws1[ref]) ws1[ref].s = headerStyle;
+  });
+
+  // Apply row styles
+  filteredRows.forEach((r, ri) => {
+    const d   = parseFloat(r.duration) || 0;
+    let rgb;
+    if (d > 60)      rgb = 'FFCDD2'; // red
+    else if (d > 30) rgb = 'FFE0B2'; // orange
+    else if (d > 0)  rgb = 'FFF9C4'; // yellow
+    else             rgb = 'C8E6C9'; // green
+
+    headers.forEach((_, ci) => {
+      const ref = XLSX.utils.encode_cell({ r: ri + 1, c: ci });
+      if (!ws1[ref]) ws1[ref] = { v: '', t: 's' };
+      ws1[ref].s = {
+        fill: { fgColor: { rgb } },
+        font: { sz: 10 },
+        alignment: { wrapText: ci === 12, horizontal: 'left' },
+        border: {
+          bottom: { style: 'thin', color: { rgb: 'DDDDDD' } },
+          right:  { style: 'thin', color: { rgb: 'DDDDDD' } },
+        },
+      };
+      // Duration column: bold
+      if (ci === 9) ws1[ref].s.font = { sz: 10, bold: true };
+    });
+  });
+
+  XLSX.utils.book_append_sheet(wb, ws1, 'Required Spares');
+
+  /* ── Sheet 2: Spare Parts Needed ── */
+  const spareData    = buildSpareNamesData(filteredRows);
+  const spareHeaders = ['#', 'Spare Part Needed', 'Count', 'Max Duration (Days)', 'Severity', 'Vendors', 'Sites Affected'];
+  const spareAoa     = [spareHeaders, ...spareData.map((s, i) => {
+    const d   = s.maxDuration;
+    const sev = d > 60 ? 'Critical' : d > 30 ? 'High' : 'Medium';
+    return [
+      i + 1,
+      s.spareName,
+      s.count,
+      s.maxDuration,
+      sev,
+      [...s.vendors].join(', '),
+      s.sites.slice(0, 10).join(', ') + (s.sites.length > 10 ? ` (+${s.sites.length - 10} more)` : ''),
+    ];
+  })];
+  const wsSpare = XLSX.utils.aoa_to_sheet(spareAoa);
+  wsSpare['!cols'] = [{ wch: 4 }, { wch: 38 }, { wch: 8 }, { wch: 18 }, { wch: 12 }, { wch: 22 }, { wch: 55 }];
+  spareHeaders.forEach((_, ci) => {
+    const ref = XLSX.utils.encode_cell({ r: 0, c: ci });
+    if (wsSpare[ref]) wsSpare[ref].s = {
+      fill: { fgColor: { rgb: '1B5E20' } },
+      font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 },
+      alignment: { horizontal: 'center', wrapText: true },
+      border: { bottom: { style: 'medium', color: { rgb: '43A047' } } },
+    };
+  });
+  spareData.forEach((s, ri) => {
+    const d   = s.maxDuration;
+    const rgb = d > 60 ? 'FFCDD2' : d > 30 ? 'FFE0B2' : 'FFF9C4';
+    spareHeaders.forEach((_, ci) => {
+      const ref = XLSX.utils.encode_cell({ r: ri + 1, c: ci });
+      if (!wsSpare[ref]) wsSpare[ref] = { v: '', t: 's' };
+      wsSpare[ref].s = {
+        fill: { fgColor: { rgb } },
+        font: { sz: 10, bold: ci === 1 },
+        alignment: { wrapText: ci === 6, horizontal: 'left' },
+        border: {
+          bottom: { style: 'thin', color: { rgb: 'DDDDDD' } },
+          right:  { style: 'thin', color: { rgb: 'DDDDDD' } },
+        },
+      };
+    });
+  });
+  XLSX.utils.book_append_sheet(wb, wsSpare, 'Spare Parts Needed');
+
+  /* ── Sheet 3: Summary ── */
+  const vendorCounts  = countBy(filteredRows, 'vendor');
+  const regionCounts  = countBy(filteredRows, 'region');
+  const techCounts    = countBy(filteredRows, 'tech');
+
+  const sumData = [
+    ['Required Spares Summary', ''],
+    ['Generated On', new Date().toLocaleString()],
+    ['Total Cases', filteredRows.length],
+    ['', ''],
+    ['By Vendor', 'Count'],
+    ...Object.entries(vendorCounts),
+    ['', ''],
+    ['By Region', 'Count'],
+    ...Object.entries(regionCounts),
+    ['', ''],
+    ['By Technology', 'Count'],
+    ...Object.entries(techCounts),
+    ['', ''],
+    ['Duration Breakdown', 'Count'],
+    ['Critical (>60 days)', filteredRows.filter(r => (parseFloat(r.duration)||0) > 60).length],
+    ['High (31-60 days)',   filteredRows.filter(r => { const d=parseFloat(r.duration)||0; return d>30&&d<=60; }).length],
+    ['Medium (≤30 days)',   filteredRows.filter(r => (parseFloat(r.duration)||0) <= 30 && (parseFloat(r.duration)||0) > 0).length],
+  ];
+
+  const ws2 = XLSX.utils.aoa_to_sheet(sumData);
+  ws2['!cols'] = [{ wch: 28 }, { wch: 12 }];
+  // Style title row
+  if (ws2['A1']) ws2['A1'].s = {
+    font: { bold: true, sz: 14, color: { rgb: '0D3B66' } },
+    fill: { fgColor: { rgb: 'E3F2FD' } },
+  };
+  XLSX.utils.book_append_sheet(wb, ws2, 'Summary');
+
+  /* ── Sheet 4: Full History ── */
+  const histAll = getHistory().flatMap(h => (h.rows || []).map(r => ({...r, _file: h.fileName})));
+  if (histAll.length > 0) {
+    const histHeaders = [...headers, 'Source File'];
+    const histAoa     = [histHeaders, ...histAll.map((r, i) => [
+      i+1, r.id, r.vendor, r.tech, r.siteId, r.siteName, r.cell, r.region,
+      r.downOn, parseFloat(r.duration)||r.duration,
+      r.reportedBy, r.reportedTo, r.remarks,
+      r.uploadedAt ? new Date(r.uploadedAt).toLocaleDateString() : '',
+      r._file || '',
+    ])];
+    const ws3 = XLSX.utils.aoa_to_sheet(histAoa);
+    ws3['!cols'] = [...ws1['!cols'], { wch: 20 }];
+    histHeaders.forEach((_, ci) => {
+      const ref = XLSX.utils.encode_cell({ r: 0, c: ci });
+      if (ws3[ref]) ws3[ref].s = headerStyle;
+    });
+    XLSX.utils.book_append_sheet(wb, ws3, 'All History');
+  }
+
+  XLSX.writeFile(wb, `Cell_Outage_Required_Spares_${new Date().toISOString().slice(0,10)}.xlsx`);
+  hideSpinner();
+}
+
+/* ════════════════════════════════════════════════════════
+   HTML REPORT EXPORT
+════════════════════════════════════════════════════════ */
+function exportHtmlReport() {
+  if (filteredRows.length === 0) {
+    alert('No data to export.\nIf you have filters active, try clearing them first.');
+    return;
+  }
+
+  const vc = countBy(filteredRows, 'vendor');
+  const rc = countBy(filteredRows, 'region');
+  const tc = countBy(filteredRows, 'tech');
+
+  const tableRows = filteredRows.map((r, i) => {
+    const d = parseFloat(r.duration) || 0;
+    let bg = '#c8e6c9';
+    if (d > 60) bg = '#ffcdd2';
+    else if (d > 30) bg = '#ffe0b2';
+    else if (d > 0)  bg = '#fff9c4';
+    return `<tr style="background:${bg}">
+      <td>${i+1}</td><td>${esc(r.id)}</td><td>${esc(r.vendor)}</td><td>${esc(r.tech)}</td>
+      <td>${esc(r.siteId)}</td><td>${esc(r.siteName)}</td><td>${esc(r.cell)}</td>
+      <td>${esc(r.region)}</td><td>${esc(r.downOn)}</td><td><b>${esc(r.duration)}</b></td>
+      <td>${esc(r.reportedBy)}</td><td>${esc(r.reportedTo)}</td><td>${esc(r.remarks)}</td>
+    </tr>`;
+  }).join('');
+
+  const vendorRows = Object.entries(vc).map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+  const regionRows = Object.entries(rc).map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+
+  const aiText = document.getElementById('aiOutput').textContent;
+
+  const html = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/>
+<title>Cell Outage Required Spares Report – ${new Date().toLocaleDateString()}</title>
+<style>
+  body{font-family:Segoe UI,sans-serif;margin:0;padding:24px;background:#f5f7fa;color:#222;}
+  h1{color:#0d3b66;border-bottom:3px solid #1e88e5;padding-bottom:8px;}
+  h2{color:#0d3b66;margin-top:32px;}
+  table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:24px;}
+  th{background:#0d3b66;color:#fff;padding:8px 10px;text-align:left;}
+  td{padding:6px 10px;border-bottom:1px solid #ddd;}
+  .summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px;}
+  .stat{border-radius:8px;padding:16px;color:#fff;text-align:center;}
+  .stat .n{font-size:2rem;font-weight:700;}
+  .ai-box{background:#fff;border:1px solid #ddd;border-radius:8px;padding:16px;white-space:pre-wrap;font-size:13px;}
+  .legend{margin-bottom:12px;font-size:13px;}
+  .legend span{display:inline-block;width:16px;height:16px;margin-right:4px;vertical-align:middle;}
+  @media print{body{padding:0;background:#fff;}}
+</style></head><body>
+<h1>📊 Cell Outage – Required Spares Report</h1>
+<p style="color:#666">Generated: ${new Date().toLocaleString()} &nbsp;|&nbsp; Total cases: <b>${filteredRows.length}</b></p>
+
+<div class="summary-grid">
+  <div class="stat" style="background:#f44336"><div class="n">${filteredRows.filter(r=>(parseFloat(r.duration)||0)>60).length}</div>Critical &gt;60 days</div>
+  <div class="stat" style="background:#ff9800"><div class="n">${filteredRows.filter(r=>{const d=parseFloat(r.duration)||0;return d>30&&d<=60;}).length}</div>High 31-60 days</div>
+  <div class="stat" style="background:#fbc02d"><div class="n">${filteredRows.filter(r=>(parseFloat(r.duration)||0)<=30&&(parseFloat(r.duration)||0)>0).length}</div>Medium ≤30 days</div>
+  <div class="stat" style="background:#1e88e5"><div class="n">${filteredRows.length}</div>Total Cases</div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:24px;">
+  <div><h2 style="margin-top:0">By Vendor</h2>
+    <table><thead><tr><th>Vendor</th><th>Cases</th></tr></thead><tbody>${vendorRows}</tbody></table>
+  </div>
+  <div><h2 style="margin-top:0">By Region</h2>
+    <table><thead><tr><th>Region</th><th>Cases</th></tr></thead><tbody>${regionRows}</tbody></table>
+  </div>
+</div>
+
+<h2>Required Spares Detail</h2>
+<div class="legend">
+  <span style="background:#ffcdd2"></span>Critical (&gt;60d) &nbsp;
+  <span style="background:#ffe0b2"></span>High (31-60d) &nbsp;
+  <span style="background:#fff9c4"></span>Medium (≤30d)
+</div>
+<table>
+<thead><tr>
+  <th>#</th><th>ID</th><th>Vendor</th><th>Tech</th><th>Site ID</th><th>Site Name</th>
+  <th>Cell</th><th>Region</th><th>Down On</th><th>Duration</th>
+  <th>Reported By</th><th>Reported To</th><th>Remarks</th>
+</tr></thead>
+<tbody>${tableRows}</tbody>
+</table>
+
+${aiText && aiText !== 'Click "Run AI Analysis" to get AI insights on the required spare parts…' ? `
+<h2>🤖 AI Analysis</h2>
+<div class="ai-box">${aiText.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>` : ''}
+
+</body></html>`;
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = `Cell_Outage_Spares_Report_${new Date().toISOString().slice(0,10)}.html`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* ════════════════════════════════════════════════════════
+   EVENT LISTENERS
+════════════════════════════════════════════════════════ */
+window.addEventListener('DOMContentLoaded', () => {
+  // File input
+  document.getElementById('fileInput').addEventListener('change', e => {
+    handleFile(e.target.files[0]);
+  });
+
+  // Drag & drop
+  const dz = document.getElementById('dropZone');
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault();
+    dz.classList.remove('dragover');
+    handleFile(e.dataTransfer.files[0]);
+  });
+
+  // AI
+  document.getElementById('btnAnalyze').addEventListener('click', runAiAnalysis);
+
+  // Export
+  document.getElementById('btnExportExcel').addEventListener('click', exportExcel);
+  document.getElementById('btnExportHtml').addEventListener('click', exportHtmlReport);
+
+  // Filters
+  ['filterSearch','filterVendor','filterRegion','filterTech'].forEach(id => {
+    document.getElementById(id).addEventListener('input', applyFilters);
+    document.getElementById(id).addEventListener('change', applyFilters);
+  });
+  document.getElementById('btnClearFilter').addEventListener('click', () => {
+    document.getElementById('filterSearch').value = '';
+    document.getElementById('filterVendor').value = '';
+    document.getElementById('filterRegion').value = '';
+    document.getElementById('filterTech').value   = '';
+    renderTable(allData);
+  });
+
+  // Clear history
+  document.getElementById('btnClearHistory').addEventListener('click', () => {
+    const history = getHistory();
+    const uploads  = history.length;
+    const rows     = history.reduce((n, h) => n + (h.rows || []).length, 0);
+    if (confirm(`Clear all upload history?\n\n${uploads} upload(s), ${rows} total spare rows will be removed.\nThis cannot be undone.`)) {
+      saveHistory([]);
+      allData = [];
+      currentData = [];
+      renderHistory();
+      // Reset UI
+      document.getElementById('statsRow').classList.add('d-none');
+      document.getElementById('chartsRow').classList.add('d-none');
+      document.getElementById('aiRow').classList.add('d-none');
+      document.getElementById('tableRow').classList.add('d-none');
+      document.getElementById('sparesBody').innerHTML = '';
+    }
+  });
+
+  // Load history on startup
+  const history = getHistory();
+  if (history.length > 0) {
+    allData = history.flatMap(h => h.rows || []);
+    if (allData.length > 0) {
+      populateFilters(allData);
+      renderTable(allData);
+      renderCharts(allData);
+    }
+  }
+  renderHistory();
+});
+</script>
+</body>
+</html>
